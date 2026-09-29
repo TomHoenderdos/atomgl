@@ -471,11 +471,7 @@ static void do_update(Context *ctx, term display_list)
 
     BaseDisplayItem *items = malloc(sizeof(BaseDisplayItem) * len);
 
-    term t = display_list;
-    for (int i = 0; i < len; i++) {
-        display_items_init_item(&items[i], term_get_list_head(t), ctx);
-        t = term_get_list_tail(t);
-    }
+    display_items_init_list(items, len, display_list, ctx);
 
     struct Rectangle damaged;
     damaged.valid = false;
