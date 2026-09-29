@@ -136,9 +136,11 @@ static bool cmp_display_item(BaseDisplayItem *a, BaseDisplayItem *b)
                 !strcmp(a->data.text_data.text, b->data.text_data.text);
 
         case PrimitiveScaledCroppedImage:
-            return (a->data.image_data.pix == b->data.image_data.pix) &&
-                (a->x_scale == b->x_scale) && (a->y_scale == b->y_scale) &&
-                (a->source_x == b->source_x) && (a->source_y == b->source_y);
+            return (a->data.image_data_with_size.pix == b->data.image_data_with_size.pix)
+                && (a->data.image_data_with_size.width == b->data.image_data_with_size.width)
+                && (a->data.image_data_with_size.height == b->data.image_data_with_size.height)
+                && (a->x_scale == b->x_scale) && (a->y_scale == b->y_scale)
+                && (a->source_x == b->source_x) && (a->source_y == b->source_y);
 
         default: {
             return true;
@@ -189,7 +191,7 @@ static void dumb_diff(BaseDisplayItem *orig, int orig_len, BaseDisplayItem *new,
     int j = 0;
 
     for (int i = 0; i < new_len; i++) {
-        if (cmp_display_item(&new[i], &orig[j])) {
+        if (j < orig_len && cmp_display_item(&new[i], &orig[j])) {
             j++;
         } else {
             bool found = false;
