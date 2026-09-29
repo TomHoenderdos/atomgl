@@ -61,10 +61,12 @@ struct Scene
 
 static void render_frame(BaseDisplayItem items[], size_t len)
 {
+    static BaseDisplayItem *row[MAX_ITEMS];
     for (int ypos = 0; ypos < screen.h; ypos++) {
+        size_t row_len = display_items_row(items, len, ypos, row);
         int xpos = 0;
         while (xpos < screen.w) {
-            xpos += dcs_lcd_draw_x(&screen, xpos, ypos, items, len);
+            xpos += dcs_lcd_draw_x(&screen, xpos, ypos, row, row_len);
         }
         for (int i = 0; i < screen.w; i++) {
             g_checksum += line_buf[i];

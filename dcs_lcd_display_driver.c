@@ -155,6 +155,12 @@ static void do_update(Context *ctx, term display_list)
         fprintf(stderr, "do_update: failed to alloc items\n");
         return;
     }
+    BaseDisplayItem **row = malloc(sizeof(BaseDisplayItem *) * len);
+    if (UNLIKELY(!row)) {
+        fprintf(stderr, "do_update: failed to alloc row\n");
+        free(items);
+        return;
+    }
 
 #ifdef ATOMGL_PROFILE
     int64_t parse_start = esp_timer_get_time();
@@ -184,9 +190,10 @@ static void do_update(Context *ctx, term display_list)
 #ifdef ATOMGL_PROFILE
         int64_t line_start = esp_timer_get_time();
 #endif
+        size_t row_len = display_items_row(items, len, ypos, row);
         int xpos = 0;
         while (xpos < screen_width) {
-            int drawn_pixels = dcs_lcd_draw_x(&driver->screen, xpos, ypos, items, len);
+            int drawn_pixels = dcs_lcd_draw_x(&driver->screen, xpos, ypos, row, row_len);
             xpos += drawn_pixels;
         }
 #ifdef ATOMGL_PROFILE
@@ -242,6 +249,7 @@ static void do_update(Context *ctx, term display_list)
 
     spi_device_release_bus(driver->bus.spi_disp.handle);
 
+    free(row);
     display_items_delete(items, len);
 
 #ifdef ATOMGL_PROFILE

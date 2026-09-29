@@ -219,6 +219,19 @@ static inline void display_items_shape_remember_outside(BaseDisplayItem *item, i
     data->outside_to = (int16_t) (xpos + run);
 }
 
+static inline size_t display_items_row(BaseDisplayItem items[], size_t items_len, int ypos,
+    BaseDisplayItem *row[])
+{
+    size_t row_len = 0;
+    for (size_t i = 0; i < items_len; i++) {
+        BaseDisplayItem *item = &items[i];
+        if ((ypos >= item->y) && (ypos < item->y + item->height)) {
+            row[row_len++] = item;
+        }
+    }
+    return row_len;
+}
+
 #define DISPLAY_ITEMS_MAX_LOGGED 3
 
 void display_items_init_item(BaseDisplayItem *item, term req, Context *ctx);

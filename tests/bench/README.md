@@ -177,10 +177,11 @@ below are for the 96 us of a 240 px panel at 40 MHz):
   crossings per line. A convex polygon has 2, whatever its number of
   points. A line where many edges start costs more, since each of them
   is set up there.
-- Many overlapping items: every draw call walks all items, so a line
-  where 50 items overlap and break it into 40 runs costs 2000 item
-  visits. The same holds for text: 25 text items side by side break a
-  line into about 130 runs.
+- Many overlapping items: every draw call walks all items that cover
+  the line, so a line where 50 items overlap and break it into 40 runs
+  costs 2000 item visits. The same holds for text: 25 text items side
+  by side break a line into about 130 runs. Items above or below the
+  line cost only a bounding box test once per line.
 
 Past the line time the frame only gets longer: each slow line delays
 the next transfer by its excess.
