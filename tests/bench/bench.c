@@ -29,15 +29,18 @@
 #include "shape.h"
 
 #define SCREEN_SIZE 240
+#define MAX_SCREEN_WIDTH 320
 #define WARMUP_FRAMES 20
 #define MIN_ELAPSED_US 500000.0
-#define MAX_ITEMS 64
+#define MAX_ITEMS 128
 #define MAX_RATIOS 32
 
 // 240 px * 16 bit at 40 MHz
 #define SPI_US_PER_LINE 96.0
+// 320 px * 16 bit at 80 MHz
+#define SPI_US_PER_LINE_320 64.0
 
-static uint16_t line_buf[SCREEN_SIZE];
+static uint16_t line_buf[MAX_SCREEN_WIDTH];
 static struct DCSLCDScreen screen;
 static uint64_t g_checksum = 0;
 
@@ -128,7 +131,7 @@ static void add_rect(struct Scene *scene, int x, int y, int w, int h, uint32_t r
 
 static void add_background(struct Scene *scene)
 {
-    add_rect(scene, 0, 0, SCREEN_SIZE, SCREEN_SIZE, 0x202020);
+    add_rect(scene, 0, 0, screen.w, screen.h, 0x202020);
 }
 
 static void add_shape(struct Scene *scene, struct ShapeData *shape, uint32_t rgb)
@@ -167,7 +170,7 @@ static void free_scene(struct Scene *scene)
 
 static void print_scene(const char *name, double us)
 {
-    double us_line = us / (double) SCREEN_SIZE;
+    double us_line = us / (double) screen.h;
     printf("%-26s %10.1f %9.2f\n", name, us, us_line);
 }
 
@@ -229,6 +232,105 @@ static double bench_shape(const char *name, uint32_t rgb, struct ShapeData *shap
     add_shape(&scene, shape, rgb);
     add_background(&scene);
     return bench_scene(name, &scene);
+}
+
+#define RACER_W 320
+#define RACER_H 240
+#define RACER_HORIZON 96
+#define RACER_BANDS 20
+
+static int racer_half_width(int y)
+{
+    return 8 + (y - RACER_HORIZON) * 150 / (RACER_H - RACER_HORIZON);
+}
+
+static int racer_centre(int y)
+{
+    int d = RACER_H - y;
+    return RACER_W / 2 + d * d / 400;
+}
+
+static void add_racer_band(struct Scene *scene, int y0, int y1, int from_frac, int to_frac,
+    uint32_t rgb)
+{
+    int c0 = racer_centre(y0);
+    int c1 = racer_centre(y1);
+    int w0 = racer_half_width(y0);
+    int w1 = racer_half_width(y1);
+    struct ShapePoint pts[] = {
+        { c0 + w0 * from_frac / 100, y0 },
+        { c0 + w0 * to_frac / 100 + 1, y0 },
+        { c1 + w1 * to_frac / 100 + 1, y1 },
+        { c1 + w1 * from_frac / 100, y1 }
+    };
+    add_shape(scene, shape_new_polygon(pts, 4), rgb);
+}
+
+static void bench_racer(void)
+{
+    screen.w = RACER_W;
+    screen.h = RACER_H;
+
+    static uint8_t skyline[160 * 24 * 4];
+    for (int y = 0; y < 24; y++) {
+        for (int x = 0; x < 160; x++) {
+            uint8_t *p = &skyline[4 * (y * 160 + x)];
+            int top = 4 + (x * 7 % 13) + (x / 20 % 2) * 6;
+            p[0] = (uint8_t) (40 + x);
+            p[1] = (uint8_t) (60 + y * 3);
+            p[2] = 90;
+            p[3] = y >= top ? 0xFF : 0;
+        }
+    }
+
+    struct Scene scene = { 0 };
+
+    add_text(&scene, 4, 2, "LAP 2/3", 0xFFFFFF, false);
+    add_text(&scene, 124, 2, "00:41.27", 0xFFFF00, false);
+    add_text(&scene, 252, 2, "POS 3", 0xFFFFFF, false);
+    add_text(&scene, 4, 20, "BEST 00:40.10", 0xC0C0C0, false);
+    add_text(&scene, 244, 20, "123 km/h", 0xC0C0C0, false);
+
+    add_rect(&scene, 136, 200, 48, 18, 0xD02020);
+    add_rect(&scene, 148, 190, 24, 10, 0x802020);
+    add_rect(&scene, 130, 212, 10, 12, 0x101010);
+    add_rect(&scene, 180, 212, 10, 12, 0x101010);
+    add_rect(&scene, 196, 150, 24, 9, 0x2040D0);
+    add_rect(&scene, 202, 145, 12, 5, 0x102080);
+    add_rect(&scene, 193, 156, 5, 6, 0x101010);
+    add_rect(&scene, 218, 156, 5, 6, 0x101010);
+
+    for (int b = 0; b < RACER_BANDS; b++) {
+        int y0 = RACER_HORIZON + b * (RACER_H - RACER_HORIZON) / RACER_BANDS;
+        int y1 = RACER_HORIZON + (b + 1) * (RACER_H - RACER_HORIZON) / RACER_BANDS;
+        add_racer_band(&scene, y0, y1, -3, 3, b % 2 ? 0xFFFFFF : 0x606060);
+        add_racer_band(&scene, y0, y1, -100, 100, 0x606060);
+        add_racer_band(&scene, y0, y1, -115, 115, b % 2 ? 0xFFFFFF : 0xD02020);
+    }
+    for (int b = 0; b < RACER_BANDS; b++) {
+        int y0 = RACER_HORIZON + b * (RACER_H - RACER_HORIZON) / RACER_BANDS;
+        int y1 = RACER_HORIZON + (b + 1) * (RACER_H - RACER_HORIZON) / RACER_BANDS;
+        add_rect(&scene, 0, y0, RACER_W, y1 - y0, b % 2 ? 0x208020 : 0x30A030);
+    }
+
+    BaseDisplayItem *item = scene_item(&scene);
+    item->primitive = PrimitiveScaledCroppedImage;
+    item->x = 0;
+    item->y = RACER_HORIZON - 24;
+    item->width = RACER_W;
+    item->height = 24;
+    item->x_scale = 2;
+    item->y_scale = 1;
+    item->data.image_data_with_size.width = 160;
+    item->data.image_data_with_size.height = 24;
+    item->data.image_data_with_size.pix = (const char *) skyline;
+
+    add_rect(&scene, 0, 0, RACER_W, RACER_HORIZON, 0x60A0E0);
+
+    bench_scene("racer (95 items, 320x240)", &scene);
+
+    screen.w = SCREEN_SIZE;
+    screen.h = SCREEN_SIZE;
 }
 
 static const char *const labels[] = {
@@ -365,6 +467,8 @@ int main(void)
     bench_sprite("sprite x3 flip x", 3, true, false);
     bench_sprite("sprite x3 flip xy", 3, true, true);
 
+    bench_racer();
+
     printf("\nshapes vs. rects of their bounding boxes\n");
     printf("%-26s %10s %10s %7s\n", "scene", "shape us", "rect us", "ratio");
     for (int i = 0; i < ratios_len; i++) {
@@ -377,11 +481,12 @@ int main(void)
 
     printf("\nchecksum: %llu\n", (unsigned long long) g_checksum);
     printf("\nHost numbers are only meaningful relative to each other: the host CPU\n"
-           "is not an ESP32-S3. On the device a 240 px RGB565 line takes %.0f us\n"
-           "to send at 40 MHz SPI, and drawing the next line is hidden behind that\n"
-           "transfer as long as it is faster. Measure on the device with\n"
-           "ATOMGL_PROFILE, see tests/bench/README.md.\n",
-        SPI_US_PER_LINE);
+           "is not an ESP32-S3. On the device a line takes width * 16 bit / SPI\n"
+           "clock to send, %.0f us for 240 px at 40 MHz and %.0f us for 320 px at\n"
+           "80 MHz, and drawing the next line is hidden behind that transfer as\n"
+           "long as it is faster. Measure on the device with ATOMGL_PROFILE, see\n"
+           "tests/bench/README.md.\n",
+        SPI_US_PER_LINE, SPI_US_PER_LINE_320);
 
     return 0;
 }

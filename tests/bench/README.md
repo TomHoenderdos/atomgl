@@ -43,9 +43,11 @@ cmake --build build/bench
 ## Host benchmark
 
 `bench.c` calls `dcs_lcd_draw_x()`, the function the ESP32 LCD driver
-calls for every pixel run, over a 240x240 screen with a single line
-buffer. No ESP-IDF code is linked; `tests/stubs/driver/spi_master.h`
-stands in for the one ESP-IDF header the renderer includes.
+calls for every pixel run, with a single line buffer, and builds each
+row's item list with `display_items_row()` as the driver does. The
+screen is 240x240, except for the racer scene, which is 320x240. No
+ESP-IDF code is linked; `tests/stubs/driver/spi_master.h` stands in for
+the one ESP-IDF header the renderer includes.
 
 Each scene is drawn over a full-screen background rect. The first table
 gives the mean time per frame (240 lines, after a warm-up) and per line.
@@ -57,8 +59,16 @@ The scenes cover single shapes, grids of small shapes, 50 overlapping
 circles, 12 lines and 5 arcs that all cross the same rows, a 256-point
 comb polygon (the most points a polygon may have, with about 128 edge
 crossings on every row) next to a 4-point polygon of the same bounding
-box, a text UI with 25 text items, and full-screen sprites at scale 1
-and 3, plain and flipped.
+box, a text UI with 25 text items, full-screen sprites at scale 1
+and 3, plain and flipped, and a racer scene.
+
+The racer scene is modelled on a racing game on a 320x240 ST7789: a
+HUD of 5 text items without background, 2 cars of 4 rects each, the
+road in 20 horizontal bands of 3 four-point polygons (centre line, road
+and kerbs), a full-width grass rect per band, a 320x24
+`scaled_cropped_image` skyline at scale 2x1 with transparent pixels
+above the skyline, and a sky rect: 95 items, of which at most 7 cover
+any row.
 
 Host numbers are only meaningful relative to each other. The host has no
 SPI bus and its CPU is much faster than the ESP32-S3's, so they do not
@@ -66,51 +76,53 @@ predict frame rates on the device. Example output (Apple Silicon, -O3):
 
 ```
 scene                        us/frame   us/line
-background only                   4.1      0.02
-rounded_rect                      7.8      0.03
-circle                            9.2      0.04
-ellipse                           8.9      0.04
-thin line                         4.6      0.02
+background only                   4.0      0.02
+rounded_rect                      7.4      0.03
+circle                            9.4      0.04
+ellipse                           9.1      0.04
+thin line                         4.5      0.02
 diagonal thick line              11.9      0.05
-arc gauge                        18.7      0.08
-ring                             14.9      0.06
-full-screen circle               19.0      0.08
-star polygon                     13.0      0.05
-20 bullets                       25.5      0.11
-50 overlapping bullets          114.6      0.48
-6 buttons                        18.0      0.07
-12 crossing lines                70.9      0.30
-5 concentric arcs               110.0      0.46
-256-point comb polygon          214.9      0.90
-4-point polygon, comb bbox        6.5      0.03
-text UI (25 text items)         210.6      0.88
-sprite x1                        41.1      0.17
-sprite x3                        42.6      0.18
-sprite x1 flip x                 41.6      0.17
-sprite x1 flip xy                41.1      0.17
-sprite x3 flip x                 42.6      0.18
-sprite x3 flip xy                43.3      0.18
+arc gauge                        18.1      0.08
+ring                             15.3      0.06
+full-screen circle               19.2      0.08
+star polygon                     13.7      0.06
+20 bullets                       19.8      0.08
+50 overlapping bullets           77.0      0.32
+6 buttons                        18.5      0.08
+12 crossing lines                67.6      0.28
+5 concentric arcs               114.2      0.48
+256-point comb polygon          215.3      0.90
+4-point polygon, comb bbox        7.0      0.03
+text UI (25 text items)          96.3      0.40
+sprite x1                        41.8      0.17
+sprite x3                        44.7      0.19
+sprite x1 flip x                 42.7      0.18
+sprite x1 flip xy                42.2      0.18
+sprite x3 flip x                 43.7      0.18
+sprite x3 flip xy                44.0      0.18
+racer (95 items, 320x240)        95.3      0.40
 
 shapes vs. rects of their bounding boxes
 scene                        shape us    rect us   ratio
-rounded_rect                      7.8        4.5    1.75
-circle                            9.2        4.4    2.09
-ellipse                           8.9        4.3    2.06
-thin line                         4.6        4.1    1.11
-diagonal thick line              11.9        5.4    2.22
-arc gauge                        18.7        5.0    3.77
-ring                             14.9        5.0    2.97
-full-screen circle               19.0        4.4    4.30
-star polygon                     13.0        5.1    2.56
-20 bullets                       25.5       13.0    1.97
-50 overlapping bullets          114.6       32.6    3.52
-6 buttons                        18.0        7.6    2.36
-12 crossing lines                70.9        4.1   17.27
-5 concentric arcs               110.0       12.5    8.79
-256-point comb polygon          214.9        5.2   41.64
-4-point polygon, comb bbox        6.5        5.3    1.23
+rounded_rect                      7.4        4.5    1.67
+circle                            9.4        4.4    2.13
+ellipse                           9.1        4.5    2.03
+thin line                         4.5        4.2    1.07
+diagonal thick line              11.9        5.1    2.31
+arc gauge                        18.1        5.0    3.63
+ring                             15.3        5.1    3.02
+full-screen circle               19.2        4.9    3.91
+star polygon                     13.7        5.3    2.58
+20 bullets                       19.8        9.7    2.05
+50 overlapping bullets           77.0       19.1    4.03
+6 buttons                        18.5        7.2    2.55
+12 crossing lines                67.6        5.2   13.06
+5 concentric arcs               114.2       12.4    9.19
+256-point comb polygon          215.3        5.3   40.74
+4-point polygon, comb bbox        7.0        5.3    1.32
+racer (95 items, 320x240)        95.3       82.9    1.15
 
-256-point comb over a 4-point polygon of its bbox: 32.97x
+256-point comb over a 4-point polygon of its bbox: 30.57x
 ```
 
 The rect version of a scene of long lines is a stack of full-screen
@@ -141,11 +153,12 @@ The table estimates the slowest line of each scene on an ESP32-S3 at
 steps of the renderer and the shape code on the host, and weighting each
 with a low and a high cycle count for the Xtensa LX7 running from flash
 cache. They are estimates, not measurements; `ATOMGL_PROFILE` gives the
-real numbers.
+real numbers. The racer scene is split into its three kinds of lines;
+at 240 MHz each figure is two thirds as large.
 
 ```
 scene                        slowest line, us
-background only                   2 - 3
+background only                   2 - 4
 rounded_rect                      7 - 13
 circle                            7 - 13
 ellipse                           8 - 14
@@ -155,14 +168,17 @@ arc gauge                        16 - 30
 ring                             12 - 22
 full-screen circle                7 - 13
 star polygon                      7 - 13
-20 bullets                       41 - 74
-6 buttons                        14 - 26
-12 crossing lines                50 - 92
+20 bullets                       27 - 48
+6 buttons                        13 - 24
+12 crossing lines                51 - 94
 sprite x1, x3, flipped or not    18 - 30
-5 concentric arcs                77 - 148
-50 overlapping bullets          143 - 254
+5 concentric arcs                77 - 149
+50 overlapping bullets           63 - 115
 256-point comb polygon          125 - 229
-text UI (25 text items)         243 - 419
+text UI (25 text items)          88 - 146
+racer, road rows                 23 - 39
+racer, HUD text rows            121 - 202
+racer, skyline rows             143 - 238
 ```
 
 A line costs roughly a fixed amount per item that crosses it plus a
@@ -177,11 +193,15 @@ below are for the 96 us of a 240 px panel at 40 MHz):
   crossings per line. A convex polygon has 2, whatever its number of
   points. A line where many edges start costs more, since each of them
   is set up there.
-- Many overlapping items: every draw call walks all items that cover
-  the line, so a line where 50 items overlap and break it into 40 runs
-  costs 2000 item visits. The same holds for text: 25 text items side
-  by side break a line into about 130 runs. Items above or below the
-  line cost only a bounding box test once per line.
+- Many items on one line: every draw call walks the items that cover
+  the line, so a line that 10 items cover and that breaks into 40 runs
+  costs 400 item visits. Items above or below the line cost only one
+  bounding box test per line, when the line's item list is built.
+- Transparent pixels: text without a background and images with
+  transparent pixels end a run at every transparent pixel, and the
+  item below then draws that single pixel. A line of the racer's
+  skyline, mostly transparent, takes one draw call per pixel, 320 on
+  a 320 px line, and a line of HUD text about 160.
 
 Past the line time the frame only gets longer: each slow line delays
 the next transfer by its excess.
