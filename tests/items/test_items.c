@@ -372,11 +372,78 @@ static void test_image_invalid(void)
     }
 }
 
-static void test_command_invalid(void)
+static void test_shape_invalid(void)
 {
+    term c = int_term(0xFF0000);
+
     expect_invalid("not a tuple", int_term(3));
     expect_invalid("empty tuple", tuple(0));
     expect_invalid("unknown command", tuple(2, atom("triangle"), int_term(1)));
+    expect_invalid("circle with ellipse arity",
+        tuple(6, atom("circle"), int_term(10), int_term(10), int_term(5), int_term(5), c));
+    expect_invalid("ellipse with circle arity", tuple(5, atom("ellipse"), int_term(10), int_term(10), int_term(5), c));
+    expect_invalid("circle radius above limit",
+        tuple(5, atom("circle"), int_term(10), int_term(10), int_term(SHAPE_VALUE_LIMIT + 1), c));
+    expect_invalid("line thickness 0",
+        tuple(7, atom("line"), int_term(0), int_term(0), int_term(9), int_term(9), int_term(0), c));
+    expect_invalid("rounded_rect color not an integer",
+        tuple(7, atom("rounded_rect"), int_term(0), int_term(0), int_term(9), int_term(9), int_term(2), atom("red")));
+    expect_invalid("arc equal angles",
+        tuple(8, atom("arc"), int_term(20), int_term(20), int_term(10), int_term(3), int_term(45), int_term(45), c));
+    expect_invalid("arc angle not an integer",
+        tuple(8, atom("arc"), int_term(20), int_term(20), int_term(10), int_term(3), atom("a"), int_term(45), c));
+    expect_invalid("arc thickness above limit",
+        tuple(8, atom("arc"), int_term(20), int_term(20), int_term(10), int_term(SHAPE_VALUE_LIMIT + 1),
+            int_term(0), int_term(90), c));
+
+    term pts = list(3, tuple(2, int_term(0), int_term(0)), tuple(2, int_term(9), int_term(0)),
+        tuple(2, int_term(0), int_term(9)));
+    expect_invalid("polygon with 2 points",
+        tuple(3, atom("polygon"), list(2, tuple(2, int_term(0), int_term(0)), tuple(2, int_term(9), int_term(0))), c));
+    expect_invalid("polygon improper list",
+        tuple(3, atom("polygon"),
+            cons(tuple(2, int_term(0), int_term(0)),
+                cons(tuple(2, int_term(9), int_term(0)), cons(tuple(2, int_term(0), int_term(9)), int_term(1)))),
+            c));
+    expect_invalid("polygon point not a tuple",
+        tuple(3, atom("polygon"), list(3, tuple(2, int_term(0), int_term(0)), int_term(9), tuple(2, int_term(0), int_term(9))), c));
+    expect_invalid("polygon point arity 3",
+        tuple(3, atom("polygon"),
+            list(3, tuple(2, int_term(0), int_term(0)), tuple(3, int_term(9), int_term(0), int_term(0)),
+                tuple(2, int_term(0), int_term(9))),
+            c));
+    expect_invalid("polygon point above limit",
+        tuple(3, atom("polygon"),
+            list(3, tuple(2, int_term(0), int_term(0)), tuple(2, int_term(SHAPE_VALUE_LIMIT + 1), int_term(0)),
+                tuple(2, int_term(0), int_term(9))),
+            c));
+    expect_invalid("polygon not a list", tuple(3, atom("polygon"), int_term(4), c));
+    expect_invalid("polygon arity 4", tuple(4, atom("polygon"), pts, c, int_term(0)));
+
+    term many = term_nil();
+    for (int i = 0; i < SHAPE_POLYGON_MAX_POINTS + 1; i++) {
+        many = cons(tuple(2, int_term(i % 2 ? 40 : 0), int_term(i % 40)), many);
+    }
+    expect_invalid("polygon above the point cap", tuple(3, atom("polygon"), many, c));
+
+    if (big_ints()) {
+        avm_int_t wrap = ((avm_int_t) 1 << 32) + 5;
+        expect_invalid("circle radius 2^32 + 5",
+            tuple(5, atom("circle"), int_term(10), int_term(10), int_term(wrap), c));
+        expect_invalid("circle cx 2^32 + 5",
+            tuple(5, atom("circle"), int_term(wrap), int_term(10), int_term(3), c));
+        expect_invalid("line thickness 2^32 + 1",
+            tuple(7, atom("line"), int_term(0), int_term(0), int_term(9), int_term(9), int_term(wrap - 4), c));
+        expect_invalid("polygon point 2^32 + 5",
+            tuple(3, atom("polygon"),
+                list(3, tuple(2, int_term(0), int_term(0)), tuple(2, int_term(wrap), int_term(0)),
+                    tuple(2, int_term(0), int_term(9))),
+                c));
+        avm_int_t huge = (avm_int_t) 1 << 40;
+        expect_invalid("arc equal huge angles",
+            tuple(8, atom("arc"), int_term(20), int_term(20), int_term(10), int_term(3), int_term(huge),
+                int_term(huge), c));
+    }
 }
 
 static void test_image_valid(void)
@@ -452,6 +519,107 @@ static void test_scaled_cropped_image_valid(void)
     delete_item(&item);
 }
 
+static void check_shape(const char *name, term req, shape_kind_t kind, int x, int y, int w, int h,
+    BaseDisplayItem *out)
+{
+    BaseDisplayItem item;
+    parse(req, &item);
+    CHECK(item.primitive == PrimitiveShape && item.data.shape_data.shape != NULL, "%s: primitive %d", name, item.primitive);
+    if (out) {
+        memset(out, 0, sizeof(*out));
+    }
+    if (item.primitive != PrimitiveShape) {
+        return;
+    }
+    CHECK(shape_kind(item.data.shape_data.shape) == kind, "%s: kind %d", name, shape_kind(item.data.shape_data.shape));
+    CHECK(item.brcolor == 0x123456FF, "%s: brcolor %#x", name, (unsigned) item.brcolor);
+    CHECK(item.x == x && item.y == y && item.width == w && item.height == h,
+        "%s: bbox (%d, %d, %d, %d), expected (%d, %d, %d, %d)", name, item.x, item.y, item.width,
+        item.height, x, y, w, h);
+    if (out) {
+        *out = item;
+    } else {
+        delete_item(&item);
+    }
+}
+
+static void check_arc_sweep(avm_int_t start, avm_int_t end, int sweep)
+{
+    BaseDisplayItem item;
+    char name[96];
+    snprintf(name, sizeof(name), "arc %lld..%lld", (long long) start, (long long) end);
+    check_shape(name,
+        tuple(8, atom("arc"), int_term(20), int_term(20), int_term(10), int_term(3), int_term(start), int_term(end),
+            int_term(0x123456)),
+        ShapeKindArc, 10, 10, 21, 21, &item);
+    if (item.primitive == PrimitiveShape) {
+        int ref_start = (int) (((start % 360) + 360) % 360);
+        struct ShapeData *ref = shape_new_arc(20, 20, 10, 3, ref_start, ref_start + sweep);
+        CHECK(ref != NULL && shape_equal(item.data.shape_data.shape, ref), "%s: sweep is not %d", name, sweep);
+        shape_destroy(ref);
+        delete_item(&item);
+    }
+}
+
+static void test_shape_valid(void)
+{
+    term c = int_term(0x123456);
+
+    check_shape("circle", tuple(5, atom("circle"), int_term(10), int_term(12), int_term(4), c), ShapeKindEllipse, 6, 8,
+        9, 9, NULL);
+    check_shape("ellipse", tuple(6, atom("ellipse"), int_term(10), int_term(12), int_term(4), int_term(2), c),
+        ShapeKindEllipse, 6, 10, 9, 5, NULL);
+    check_shape("rounded_rect",
+        tuple(7, atom("rounded_rect"), int_term(1), int_term(2), int_term(30), int_term(20), int_term(5), c),
+        ShapeKindRoundedRect, 1, 2, 30, 20, NULL);
+    check_shape("line", tuple(7, atom("line"), int_term(0), int_term(5), int_term(40), int_term(5), int_term(1), c),
+        ShapeKindLine, 0, 5, 41, 1, NULL);
+    check_shape("circle at the value limit",
+        tuple(5, atom("circle"), int_term(-SHAPE_VALUE_LIMIT), int_term(SHAPE_VALUE_LIMIT), int_term(SHAPE_VALUE_LIMIT), c),
+        ShapeKindEllipse, -2 * SHAPE_VALUE_LIMIT, 0, 2 * SHAPE_VALUE_LIMIT + 1, 2 * SHAPE_VALUE_LIMIT + 1, NULL);
+    check_shape("polygon",
+        tuple(3, atom("polygon"),
+            list(3, tuple(2, int_term(2), int_term(3)), tuple(2, int_term(30), int_term(3)),
+                tuple(2, int_term(2), int_term(25))),
+            c),
+        ShapeKindPolygon, 2, 3, 28, 22, NULL);
+
+    term many = term_nil();
+    struct ShapePoint many_points[SHAPE_POLYGON_MAX_POINTS];
+    for (int i = 0; i < SHAPE_POLYGON_MAX_POINTS; i++) {
+        many = cons(tuple(2, int_term(i % 2 ? 40 : 0), int_term(i / 2)), many);
+        many_points[SHAPE_POLYGON_MAX_POINTS - 1 - i] = (struct ShapePoint){ i % 2 ? 40 : 0, i / 2 };
+    }
+    BaseDisplayItem comb;
+    check_shape("polygon at the point cap", tuple(3, atom("polygon"), many, c), ShapeKindPolygon, 0, 0, 40, SHAPE_POLYGON_MAX_POINTS / 2 - 1, &comb);
+    if (comb.primitive == PrimitiveShape) {
+        struct ShapeData *ref = shape_new_polygon(many_points, SHAPE_POLYGON_MAX_POINTS);
+        CHECK(ref != NULL && shape_equal(comb.data.shape_data.shape, ref), "polygon cap: points differ");
+        shape_destroy(ref);
+        delete_item(&comb);
+    }
+
+    check_arc_sweep(0, 90, 90);
+    check_arc_sweep(0, -90, 270);
+    check_arc_sweep(0, -359, 1);
+    check_arc_sweep(0, 400, 40);
+    check_arc_sweep(0, 360, 360);
+    check_arc_sweep(0, -360, 360);
+    check_arc_sweep(0, 720, 360);
+    check_arc_sweep(-720, 0, 360);
+    check_arc_sweep(350, 10, 20);
+    check_arc_sweep(10, 350, 340);
+    if (big_ints()) {
+        avm_int_t huge = (avm_int_t) 1 << 40;
+        check_arc_sweep(huge, huge + 90, 90);
+        check_arc_sweep(huge, huge + 360, 360);
+        check_arc_sweep(-huge, -huge - 90, 270);
+        avm_int_t turns = (avm_int_t) 360 << 32;
+        check_arc_sweep(turns + 5, 5, 360);
+        check_arc_sweep(turns + 5, 95, 90);
+    }
+}
+
 static void test_integer_forms(void)
 {
     BaseDisplayItem item;
@@ -478,7 +646,38 @@ static void test_integer_forms(void)
     delete_item(&item);
     expect_invalid("image x boxed 2^31",
         tuple(5, atom("image"), boxed_int((avm_int64_t) 1 << 31), int_term(0), transparent, ok_img));
+    expect_invalid("circle radius boxed 2^40",
+        tuple(5, atom("circle"), int_term(0), int_term(0), boxed_int((avm_int64_t) 1 << 40), int_term(0)));
 
+    struct
+    {
+        avm_int64_t start;
+        avm_int64_t end;
+        int ref_start;
+        int sweep;
+    } arcs[] = {
+        { (avm_int64_t) 1 << 27, ((avm_int64_t) 1 << 27) + 90, (int) (((avm_int64_t) 1 << 27) % 360), 90 },
+        { -((avm_int64_t) 1 << 27), 0, (int) (360 - ((avm_int64_t) 1 << 27) % 360), (int) (((avm_int64_t) 1 << 27) % 360) },
+        { INT64_MAX, INT64_MAX - 10, (int) (INT64_MAX % 360), 350 },
+        { INT64_MIN, 0, (int) (360 + INT64_MIN % 360), (int) (-(INT64_MIN % 360)) },
+        { (avm_int64_t) 360 << 40, 0, 0, 360 },
+    };
+    for (size_t i = 0; i < sizeof(arcs) / sizeof(arcs[0]); i++) {
+        parse(tuple(8, atom("arc"), int_term(20), int_term(20), int_term(10), int_term(3), boxed_int(arcs[i].start),
+                  boxed_int(arcs[i].end), int_term(0)),
+            &item);
+        CHECK(item.primitive == PrimitiveShape, "boxed arc %zu: primitive %d", i, item.primitive);
+        if (item.primitive == PrimitiveShape) {
+            struct ShapeData *ref = shape_new_arc(20, 20, 10, 3, arcs[i].ref_start, arcs[i].ref_start + arcs[i].sweep);
+            CHECK(ref != NULL && shape_equal(item.data.shape_data.shape, ref), "boxed arc %zu: expected %d + %d", i,
+                arcs[i].ref_start, arcs[i].sweep);
+            shape_destroy(ref);
+        }
+        delete_item(&item);
+    }
+    expect_invalid("arc equal boxed angles",
+        tuple(8, atom("arc"), int_term(20), int_term(20), int_term(10), int_term(3), boxed_int(INT64_MIN),
+            boxed_int(INT64_MIN), int_term(0)));
 }
 
 static term text_binary(const char *text)
@@ -626,6 +825,18 @@ static void test_text(void)
     expect_invalid("text not a string", text(int_term(0), font, fg, transparent, int_term(3)));
     expect_invalid("text improper list", text(int_term(0), font, fg, transparent, cons(int_term('a'), int_term(3))));
     expect_invalid_on_alloc_failure("text", text(int_term(0), font, fg, transparent, string("abc")), 1);
+}
+
+static void test_alloc_failures(void)
+{
+    term c = int_term(0x123456);
+    expect_invalid_on_alloc_failure("circle", tuple(5, atom("circle"), int_term(10), int_term(10), int_term(4), c), 1);
+    expect_invalid_on_alloc_failure("polygon",
+        tuple(3, atom("polygon"),
+            list(3, tuple(2, int_term(0), int_term(0)), tuple(2, int_term(9), int_term(0)),
+                tuple(2, int_term(0), int_term(9))),
+            c),
+        2);
 }
 
 static term *heap_mark(void)
@@ -969,12 +1180,14 @@ int main(void)
 
     test_scaled_cropped_image_invalid();
     test_image_invalid();
-    test_command_invalid();
+    test_shape_invalid();
     test_image_valid();
     test_scaled_cropped_image_valid();
+    test_shape_valid();
     test_integer_forms();
     test_rect();
     test_text();
+    test_alloc_failures();
     test_log_format();
     test_huge_rect_pixels();
     test_image_pixels();
